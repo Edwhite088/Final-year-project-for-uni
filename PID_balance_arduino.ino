@@ -1,3 +1,14 @@
+/*--------------------*/
+/* This code is the PID system that controls
+4 linear motors using an MPU6050 as feedback
+/*--------------------*/
+/* Code by Edward White
+Version 1.0  getting the mpu6050 to work
+Version 1.1 Using the mpu as an input of the motor left for up right for down
+Version 1.2 Turning the PID system for that motor
+Version 1.3 adding all motors to the controller and PID system
+/*--------------------*/
+
 #include "Wire.h"
 
 
@@ -10,6 +21,7 @@ int gyro_error = 0, acc_error = 0, i = 0, j = 0;
 
 const int MPU = 0x68; //Address for the gyroscope
 
+// Values used in the PID
 float Total_angleX, Total_angleY;
 float rad_to_deg = 180/3.141592654;
 float elapsedtime, timer, timePrev;
@@ -26,6 +38,7 @@ float pitch_desired_angle = 0, pitch_PID, pitch_error, pitch_previous_error, pit
 float pitch_pid_i = 0, pitch_pid_d = 0; 
 float pitch_kp = 0.7, pitch_ki = 0.006, pitch_kd = 0.2;  
 
+// For testing on the MPU output 
 /*char tmp_str[7];
 char* int16_to_str(int16_t i){
   sprintf(tmp_str, "%d", i);
@@ -73,16 +86,16 @@ void setup() {
   analogWrite(enC, 255);
   analogWrite(enD, 255);
   delay(12000); //Due to only being a motor this is a value that is completely deterministic
-  
-  digitalWrite(in1, LOW);
+  // Sets the linear motor to a mid point it will vary timing wise depending on the motors (use stepper for more control)
+  digitalWrite(in1, LOW); // Front left UP
   digitalWrite(in2, HIGH);
-  digitalWrite(in3, HIGH); 
+  digitalWrite(in3, HIGH); // Back left UP
   digitalWrite(in4, LOW);
   analogWrite(enA, 255); 
   analogWrite(enB, 255);
-  digitalWrite(in5, LOW);
+  digitalWrite(in5, LOW); // Front right UP
   digitalWrite(in6, HIGH);
-  digitalWrite(in7, LOW);
+  digitalWrite(in7, LOW); // Back right UP
   digitalWrite(in8, HIGH);
   analogWrite(enC, 255);
   analogWrite(enD, 255);
@@ -95,21 +108,21 @@ void setup() {
   digitalWrite(in6, LOW);
   digitalWrite(in7, LOW); 
   digitalWrite(in8, LOW);
-  
+  // Get the error from the gyroscope on a flat surface to normalise output
   if(gyro_error == 0){
     for(i = 0; i < 200; i++){
       Wire.beginTransmission(MPU);
       Wire.write(0x43);
       Wire.endTransmission(false);
       Wire.requestFrom(MPU, 4, true);
-
+      // Read the output from the gyroscope
       gyro_rawX = Wire.read() <<8 | Wire.read();
       gyro_rawY = Wire.read() <<8 | Wire.read();
-
+      // Add all of the values together
       rawXg_error = rawXg_error + (gyro_rawX/32.8);
       rawYg_error = rawYg_error + (gyro_rawY/32.8);
 
-      if(i == 199){
+      if(i == 199){ // average out the total error (200 is detemanistic more probably would not make much of a difference)
         rawXg_error = rawXg_error / 200;
         rawYg_error = rawYg_error / 200;
 
@@ -117,7 +130,7 @@ void setup() {
       }
     }
   }
-
+  // Do the same for the acceration of the gyroscope (This is what is used for the motors)
   if(acc_error == 0){
     for(j = 0; j < 200; j++){
       Wire.beginTransmission(MPU);
@@ -128,10 +141,12 @@ void setup() {
       acc_rawX=(Wire.read() <<8 | Wire.read()); //each value needs two registres
       acc_rawY=(Wire.read() <<8 | Wire.read());
       acc_rawZ=(Wire.read() <<8 | Wire.read());
+      // map the output to a value that motors can read (1/2 in this case due to 4 motors one on each corner)
       acc_rawX = map(acc_rawX, -17000, 17000, -125, 125);
       acc_rawY = map(acc_rawY, -17000, 17000, -125, 125);
       acc_rawZ = map(acc_rawZ, -17000, 17000, -125, 125);
 
+      // Maths to smooth the output of the curve
       /*---X---*/
       Xangle_error = Xangle_error + ((atan((acc_rawY)/sqrt(pow((acc_rawX),2) + pow((acc_rawZ),2)))*rad_to_deg));
       /*---Y---*/
@@ -147,20 +162,21 @@ void setup() {
   }
 }
 
+// Start the loop
 void loop() {
  
   
   analogWrite(enA, 255), (enB, 255), (enC, 255), (enD, 255);
-
+  // Start the PID system
   timePrev = timer;
   timer = millis();
   elapsedtime = (timer - timePrev) / 1000;
-  
+  // Read the output from the gyroscope and checking against the average error from earlier
   Wire.beginTransmission(MPU);
   Wire.write(0x43); //Register for ACCEL_XOUT_H from the MPU6050 datasheet
   Wire.endTransmission(false); //keeps the connection active
   Wire.requestFrom(MPU, 4, true); // requests a total of 14 registers
-
+  // This is not used in the code but can be for other ways of PID
   gyro_rawX = Wire.read()<<8 | Wire.read(); // Reading from GYRO_XOUT_H and GYRO_XOUT_L
   gyro_rawX = Wire.read()<<8 | Wire.read(); // Reading from GYRO_YOUT_H and 
 
@@ -230,12 +246,12 @@ void loop() {
   if(pitch_PID > 150){
     pitch_PID = 150;
   }
-
+  // Work out and send the values to the motor drivers
   RF = - roll_PID - pitch_PID;
   LF = roll_PID + pitch_PID;
   RR = roll_PID - pitch_PID;
   LR = - roll_PID + pitch_PID;
-   
+  // the values cannot be over 255
   if(LF > 255){
     LF = 255;
   }
@@ -260,7 +276,7 @@ void loop() {
   if(RR < -255){
     RR = -255;
   }
-  
+  // Secondary check to stop the motors from bouncing
   if((Total_angleX == 0) &&(Total_angleY == 0)){
     LF = 0;
     LR = 0;
@@ -279,12 +295,14 @@ void loop() {
     digitalWrite(in7, LOW); 
     digitalWrite(in8, LOW);
   }
+  // Debugging
   Serial.print("LF = "); Serial.println(LF);
   Serial.print("LR = "); Serial.println(LR);
   Serial.print("RF = "); Serial.println(RF);
   Serial.print("RR = "); Serial.println(RR);
   Serial.println();
-  delay(100);
+  //delay(100);
+  // Send the values to the motor driver
   if(RF < 0){
     digitalWrite(in5, HIGH);
     digitalWrite(in6, LOW);
